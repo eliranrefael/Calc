@@ -8,6 +8,11 @@ public interface ICalcFlowManager
     public double Calc(string equetion);
 }
 
+public interface IEquationPriorityManager
+{
+    public int[] GetSubequestionIndexes(string equation);
+}
+
 public interface ICalcOperator
 {
     public double Operate (double x, double y);
@@ -51,35 +56,86 @@ public class Divide : ICalcOperator
             throw new InvalidOperationException("Cannot divide in zero");
         }
 
-        return x / y;
+        return Math.Round(x / y, 2);
     }
 }
 
 public class CalcFlowManagerSimple: ICalcFlowManager
 {
     private readonly IEquationParser _parser;
-    public CalcFlowManagerSimple(IEquationParser parser)
+    private readonly IComponentContext _context;
+    public CalcFlowManagerSimple(IEquationParser parser, IComponentContext context)
     {
         _parser = parser;
+        _context = context;
     }
 
     public double Calc(string equation)
     {
         ParsedEquationSimple result = _parser.Parse(equation);
-        return result.Operator.Operate(result.FirstOperand, result.SecondOperand);
+        var calcOperator = _context.ResolveKeyed<ICalcOperator>(result.Operator);
+        return calcOperator.Operate(result.FirstOperand, result.SecondOperand);
+    }
+}
+
+public class CalcFlowManager : ICalcFlowManager
+{
+    private readonly IComponentContext _context;
+    private readonly ICalcFlowManager _calcFlowManagerSimple;
+    private readonly IEquationPriorityManager _equationPriorityManager;
+    public CalcFlowManager(IComponentContext context, IEquationPriorityManager equationPriorityManager)
+    {
+        _context = context;
+        _equationPriorityManager = equationPriorityManager;
+        _calcFlowManagerSimple = _context.ResolveKeyed<ICalcFlowManager>("Simple");
+    }
+
+    public double Calc(string equetion)
+    {
+        var parsedEquetion = equetion;
+        Regex regex = new Regex("([-]*[0-9.]+)[^0-9.]+([0-9.]+)");
+        var isOperationExist = regex.Match(parsedEquetion).Success;
+
+        while (isOperationExist)
+        {
+            var substringIndexes = _equationPriorityManager.GetSubequestionIndexes(parsedEquetion);
+            var substring = parsedEquetion.Substring(substringIndexes[0], substringIndexes[1]);
+            var result = _calcFlowManagerSimple.Calc(substring);
+            parsedEquetion = parsedEquetion.Remove(substringIndexes[0], substringIndexes[1]);
+            parsedEquetion = parsedEquetion.Insert(substringIndexes[0], result.ToString());
+            var match = regex.Match(parsedEquetion);
+            isOperationExist = match.Success && match.Groups.Count > 1;
+        }
+
+        return Double.Parse(parsedEquetion);
+    }
+}
+
+public class EquationPriorityManager : IEquationPriorityManager
+{
+    public int[] GetSubequestionIndexes(string equetion)
+    {
+        int[] result;
+        var regex = new Regex("[-]*[0-9.]+[/X]+[0-9.]+");
+        var match = regex.Match(equetion);
+        if (!match.Success)
+        {
+            regex = new Regex("[-]*[0-9.]+[^0-9.]+[0-9.]+");
+            match = regex.Match(equetion);
+        }
+
+        var startIndex = match.Index;
+        var length = match.Length;
+        result = new int[] { startIndex, length };
+        return result;
     }
 }
 
 public class EquationParser: IEquationParser
 {
-    private readonly IComponentContext _context;
-    public EquationParser(IComponentContext context)
-    {
-        _context = context;
-    }
     public ParsedEquationSimple Parse(string equation)
     {
-        Regex regex = new Regex("([0-9 /.]+)(.)([0-9 /.]+)");
+        Regex regex = new Regex("([-]*[0-9.]+)([^0-9.]+)([0-9.]+)");
         Match match = regex.Match(equation);
         if (!match.Success)
         {
@@ -88,9 +144,7 @@ public class EquationParser: IEquationParser
 
         double firstOperand = Double.Parse(match.Groups[1].Value);
         double secondOperand = Double.Parse(match.Groups[3].Value);
-        var calcOperator = _context.ResolveKeyed<ICalcOperator>(match.Groups[2].Value);
-
          
-        return new ParsedEquationSimple(calcOperator, firstOperand, secondOperand);
+        return new ParsedEquationSimple(match.Groups[2].Value, firstOperand, secondOperand);
     }
 }

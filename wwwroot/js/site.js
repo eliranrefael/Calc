@@ -22,10 +22,6 @@ $(() => {
         if (operators.indexOf(lastChar) > -1) {
             numInput.val(inputVal.slice(0, -1) + opVal);
         }
-        else if (containsOperator) {
-            stackChar = opVal;
-            calculate(numInput.val());
-        }
         else {
             numInput.val(inputVal + opVal);
         }
